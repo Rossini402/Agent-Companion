@@ -130,3 +130,14 @@
 
 4. **安全判断为同步前置，给首字延迟增加一次非流式 LLM 往返**
    - S1 是阻塞式（必须在写用户消息和流式回复之前完成），deepseek-v4-flash 作为推理模型的非流式补全可能有数百毫秒到数秒延迟，直接抬高聊天首字时间。文章182 接受此代价（安全 > 体验）。若延迟不可接受，备选：对明显低风险输入做本地 fast-pass 跳过 LLM（但会牺牲部分判断质量），需权衡。
+
+## 阶段4设计 · 主动与成长
+
+1. **反馈注入 vs 长期记忆抽取的语义重叠未消歧**
+   - 阶段1的记忆抽取会把『以后回复我直接一点』这类显式偏好抽成 agent_memories(type=偏好) 注入 prompt；阶段4 的负反馈(too_long/too_cold)同样注入 prompt。两者可能对同一偏好重复施压、甚至措辞冲突。v1 文档将反馈段与记忆段并列放在 system，但未定义优先级或去重。需确认：是否容忍这种轻微重复（与 stage1 默认风格一致，简单优先），还是要在 v2 做『反馈→偏好画像』归一。
+
+2. **流式刚结束的回复无法立即反馈（messageId 时序）**
+   - 189 明确指出流式输出结束瞬间，前端持有的可能是临时 ID 而非 D1 messageId，因此只对『服务端历史返回过的 assistant 消息』开放反馈按钮（persistedAssistantMessageIds）。但 stage1 的 /chat SSE done 事件已回传 assistantMessageId（agent-chat.ts:167-170），理论上可让刚生成的回复也能立即反馈。需确认 v1 是沿用 189 的保守策略（仅历史消息可点），还是利用 done 事件的 assistantMessageId 放开即时反馈——前者体验差一点但绝不误提交，后者需前端把 done.assistantMessageId 写回当前消息。
+
+3. **care 端点鉴权层级与现有 /agent 前缀的归属**
+   - 190 原文关怀路由在 /rpc/agent/my/:agentId/care-*，且 repository 放在 auth/repository.ts；本项目 stage1 是 agentChatRoutes(/agent 前缀)+services/agent-chat。文档已对齐到本项目结构(/agent/care/:agentId/*)，但需确认 Agent 归属校验：stage1 /chat 里用裸 SQL 查 user_agent_companions(agent-chat.ts:78-82) 验证归属，care 端点是否复用同一查询，避免用户给不属于自己的 agentId 生成关怀消息。
