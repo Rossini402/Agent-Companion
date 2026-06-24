@@ -2,11 +2,23 @@ import type {
   ConversationIntent,
   ConversationEmotion,
   ConversationRelationshipStage,
+  ConversationSafety,
   EmotionRoute,
   ReplyPolicy,
 } from "@ai-companion/contracts"
 
 const HIDDEN = "以上为隐性策略，请勿在回复中暴露任何分类标签或内部术语。"
+
+/** 安全边界注入（文章182）：continue/safe 时返回空串被 filter 剔除 */
+export function getSafetySystemInstruction(safety: ConversationSafety | null | undefined): string {
+  if (!safety || safety.boundaryAction === "continue") return ""
+  return [
+    "本轮安全边界判断（必须遵守）：",
+    `- 等级：${safety.safetyLevel}；分类：${safety.category}；动作：${safety.boundaryAction}`,
+    `- 回复策略：${safety.responseGuidance}`,
+    "请优先保护用户与他人的现实安全、隐私和关系边界；不要提供操控、伤害、违法或高风险专业建议。",
+  ].join("\n")
+}
 
 export function getIntentSystemInstruction(intent: ConversationIntent | null | undefined): string {
   if (!intent) return ""

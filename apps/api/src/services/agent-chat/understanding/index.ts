@@ -20,8 +20,8 @@ export async function analyzeConversationUnderstanding(ctx: UnderstandingContext
     const emotion = await detectEmotion(ctx, intent)
     const relationshipStage = await analyzeRelationshipStage(ctx, intent, emotion)
     const route = buildEmotionRoute({ intent, emotion, relationshipStage })
-    const replyPolicy = buildReplyPolicy({ safety: null, intent, emotion, relationshipStage, route })
-    return { analysisVersion: "conversation-understanding-v2", safety: null, intent, emotion, relationshipStage, route, replyPolicy }
+    const replyPolicy = buildReplyPolicy({ safety: ctx.safety ?? null, intent, emotion, relationshipStage, route })
+    return { analysisVersion: "conversation-understanding-v2", safety: ctx.safety ?? null, intent, emotion, relationshipStage, route, replyPolicy }
   } catch (err) {
     console.warn("conversation understanding failed, full fallback", err)
     const intent = normalizeIntent(fallbackIntent)
@@ -33,7 +33,7 @@ export async function analyzeConversationUnderstanding(ctx: UnderstandingContext
       emotion,
     )
     const route = buildEmotionRoute({ intent, emotion, relationshipStage })
-    const replyPolicy = buildReplyPolicy({ safety: null, intent, emotion, relationshipStage, route })
-    return { analysisVersion: "conversation-understanding-v2", safety: null, intent, emotion, relationshipStage, route, replyPolicy }
+    const replyPolicy = buildReplyPolicy({ safety: ctx.safety ?? null, intent, emotion, relationshipStage, route })
+    return { analysisVersion: "conversation-understanding-v2", safety: ctx.safety ?? null, intent, emotion, relationshipStage, route, replyPolicy }
   }
 }

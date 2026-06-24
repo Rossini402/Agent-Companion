@@ -1,5 +1,6 @@
 import type { InboxChatConversation, ConversationUnderstanding } from "@ai-companion/contracts"
 import {
+  getSafetySystemInstruction,
   getIntentSystemInstruction,
   getRelationshipStageSystemInstruction,
   getEmotionRouteSystemInstruction,
@@ -38,6 +39,8 @@ export function buildAgentChatMessages(input: {
     "请基于当前聊天对象、关系氛围和用户意图，用简洁、自然的中文回答用户。",
     "如果用户要求起草回复，请直接给出可发送的聊天内容，避免正式公文格式和职场汇报语气。",
     "你的建议应尊重双方边界，避免操控式话术、制造焦虑或诱导过度解读。",
+    // 阶段3 安全边界注入（最前，紧贴人设/通用约束之后）
+    getSafetySystemInstruction(understanding?.safety),
     // 阶段2 对话理解链注入（人设之后、长期记忆之前）：意图→关系阶段→情绪/路由→回复策略
     getIntentSystemInstruction(understanding?.intent),
     getRelationshipStageSystemInstruction(understanding?.relationshipStage),

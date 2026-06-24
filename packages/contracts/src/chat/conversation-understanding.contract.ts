@@ -1,4 +1,5 @@
 import { z } from "zod"
+import { ConversationSafetySchema } from "./safety.contract"
 
 /** 意图 primary 候选（文章183） */
 export const CompanionIntentPrimarySchema = z.enum([
@@ -224,7 +225,7 @@ export type ReplyPolicy = z.infer<typeof ReplyPolicySchema>
 /** 整轮理解结果（写 metadata 用） */
 export const ConversationUnderstandingSchema = z.object({
   analysisVersion: z.literal("conversation-understanding-v2"),
-  safety: z.null(), // v1 占位（阶段3 接安全层后替换）
+  safety: ConversationSafetySchema.nullable(), // 阶段3 接入：承载本轮安全边界判断
   intent: ConversationIntentSchema,
   emotion: ConversationEmotionSchema,
   relationshipStage: ConversationRelationshipStageSchema,
