@@ -48,3 +48,17 @@
 
 5. **Callbacks 事件方法签名为简化版，runId 等参数顺序需以源码为准**
    - 文章43 的 handleChatModelStart/handleToolStart 等只列了 (serialized, input, runId) 三个参数，但 LangChain 实际回调通常还带 parentRunId、tags、metadata、extraParams 等。自建 handler 落地时应以 BaseCallbackHandler 真实方法签名为准，文中签名为教学简化。
+
+## 单元04 · LangGraph 实战
+
+1. **Checkpointer 导出名两处不一致（InMemorySaver vs MemorySaver）**
+   - 文章48（Checkpointer）通篇用 `import { InMemorySaver } from '@langchain/langgraph'`，而文章52（中断机制）、53（HITL）改用 `MemorySaver`。两者在文中均未说明是别名还是不同 API。落地前需对照实际安装的 @langchain/langgraph 版本核对真实导出名（很可能其一为旧名/别名），否则会 import 报错。
+
+2. **节点第二参数命名在不同文章里不统一（config vs runtime）**
+   - 文章45/54 把节点第二参数叫 `config`，从 `config.configurable.user_id` 读运行时参数；文章58/61/60 改叫 `runtime`，从 `runtime.context.userId` 和 `runtime.store` 读。同时调用侧也有 `{ configurable: { user_id } }`（文章45/48）与 `{ context: { userId } }`（文章58/61）两套传参写法并存。读者容易混淆——这可能是 LangGraph.js 新旧 API 演进（configurable → runtime context）的过渡，需确认当前版本到底用哪一套，避免 context 传进去却在节点里读不到。
+
+3. **消息内容读取属性不一致（.content vs .text）**
+   - 大部分文章用 `msg.content` 读消息内容，但文章58/60/61 多处用 `state.messages.at(-1)?.text` 和 `message.text`。.text 是否为当前版本 LangChain 消息对象的有效属性需核对，否则可能取到 undefined。
+
+4. **StateSchema/MessagesValue/ReducedValue 等 API 名称偏新，需与官方对齐**
+   - 文中大量使用 `new StateSchema({...})`、`MessagesValue`、`new ReducedValue(schema, { reducer })`、`GraphNode`、`ConditionalEdgeRouter` 等。这套是较新的 LangGraph.js 写法，与早期官方文档常见的 `Annotation.Root`/`Annotation` API 差异较大。落地时建议先以实际安装版本的类型定义为准，确认这些符号确实从 `@langchain/langgraph` 导出。
