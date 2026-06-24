@@ -1,0 +1,11 @@
+node_modules/
+dist/
+.wrangler/
+.dev.vars
+.turbo/
+*.log
+.DS_Store
+.playwright-mcp/
+.scrape-tmp/
+# 抓取的付费知识库（版权内容，本地参考，不入库）
+knowledge-base/
