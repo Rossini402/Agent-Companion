@@ -61,3 +61,74 @@ export const agentMemories = sqliteTable(
 export type AgentConversationRow = typeof agentConversations.$inferSelect
 export type AgentConversationMessageRow = typeof agentConversationMessages.$inferSelect
 export type AgentMemoryRow = typeof agentMemories.$inferSelect
+
+/** 阶段4 · 消息反馈：一用户 × 一消息唯一一条（189） */
+export const agentMessageFeedbacks = sqliteTable(
+  "agent_message_feedbacks",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id").notNull(),
+    agentId: text("agent_id").notNull(),
+    conversationId: text("conversation_id").notNull(),
+    messageId: text("message_id").notNull(),
+    rating: text("rating", { enum: ["positive", "negative"] }).notNull(),
+    reason: text("reason"),
+    note: text("note"),
+    createdAtMs: integer("created_at_ms").notNull(),
+    updatedAtMs: integer("updated_at_ms").notNull(),
+  },
+  (t) => ({
+    userMessageUnique: uniqueIndex("idx_agent_message_feedbacks_user_message_unique").on(t.userId, t.messageId),
+    byAgentRecent: index("idx_agent_message_feedbacks_agent_recent").on(t.userId, t.agentId, t.updatedAtMs),
+  }),
+)
+
+/** 阶段4 · 主动关怀计划：一用户 × 一 Agent 唯一一份（190） */
+export const agentCarePlans = sqliteTable(
+  "agent_care_plans",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id").notNull(),
+    agentId: text("agent_id").notNull(),
+    enabled: integer("enabled").notNull(),
+    frequency: text("frequency", { enum: ["daily", "weekly", "custom"] }).notNull(),
+    preferredTime: text("preferred_time"),
+    scenesJson: text("scenes_json").notNull(),
+    tone: text("tone", { enum: ["light", "gentle", "intimate"] }).notNull(),
+    customPrompt: text("custom_prompt"),
+    nextRunAtMs: integer("next_run_at_ms"),
+    createdAtMs: integer("created_at_ms").notNull(),
+    updatedAtMs: integer("updated_at_ms").notNull(),
+  },
+  (t) => ({
+    userAgentUnique: uniqueIndex("idx_agent_care_plans_user_agent_unique").on(t.userId, t.agentId),
+    byNextRun: index("idx_agent_care_plans_next_run").on(t.enabled, t.nextRunAtMs),
+  }),
+)
+
+/** 阶段4 · 主动关怀事件：每次生成一条，绑定真实 assistant 消息（190） */
+export const agentCareEvents = sqliteTable(
+  "agent_care_events",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id").notNull(),
+    agentId: text("agent_id").notNull(),
+    carePlanId: text("care_plan_id"),
+    conversationId: text("conversation_id").notNull(),
+    messageId: text("message_id").notNull(),
+    scene: text("scene").notNull(),
+    status: text("status", { enum: ["generated", "read"] }).notNull(),
+    message: text("message").notNull(),
+    metadataJson: text("metadata_json"),
+    generatedAtMs: integer("generated_at_ms").notNull(),
+    readAtMs: integer("read_at_ms"),
+  },
+  (t) => ({
+    byAgentGenerated: index("idx_agent_care_events_agent_generated").on(t.userId, t.agentId, t.generatedAtMs),
+    byMessage: index("idx_agent_care_events_message").on(t.messageId),
+  }),
+)
+
+export type AgentMessageFeedbackRow = typeof agentMessageFeedbacks.$inferSelect
+export type AgentCarePlanRow = typeof agentCarePlans.$inferSelect
+export type AgentCareEventRow = typeof agentCareEvents.$inferSelect
