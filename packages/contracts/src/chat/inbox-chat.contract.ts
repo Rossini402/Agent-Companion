@@ -42,6 +42,36 @@ export const InboxChatRequestSchema = z.object({
 })
 export type InboxChatRequest = z.infer<typeof InboxChatRequestSchema>
 
+/** 用户反馈（阶段4，文章189） */
+export const AgentMessageFeedbackRatingSchema = z.enum(["positive", "negative"])
+export const AgentMessageFeedbackReasonSchema = z.enum([
+  "good_tone",
+  "helpful",
+  "warm",
+  "remembered_context",
+  "bad_tone",
+  "too_long",
+  "too_cold",
+  "too_pushy",
+  "wrong_memory",
+  "unsafe",
+  "other",
+])
+export const AgentMessageFeedbackSchema = z.object({
+  rating: AgentMessageFeedbackRatingSchema,
+  reason: AgentMessageFeedbackReasonSchema.nullable(),
+  note: z.string().nullable(),
+  updatedAtMs: z.number().int().nonnegative(),
+})
+export type AgentMessageFeedback = z.infer<typeof AgentMessageFeedbackSchema>
+
+export const SubmitAgentMessageFeedbackRequestSchema = z.object({
+  rating: AgentMessageFeedbackRatingSchema,
+  reason: AgentMessageFeedbackReasonSchema.optional().nullable(),
+  note: z.string().trim().max(500).optional().nullable(),
+})
+export type SubmitAgentMessageFeedbackRequest = z.infer<typeof SubmitAgentMessageFeedbackRequestSchema>
+
 /** 历史会话里的单条消息（恢复聊天窗口用） */
 export const AgentConversationMessageSchema = z.object({
   id: z.string().min(1),
@@ -51,6 +81,7 @@ export const AgentConversationMessageSchema = z.object({
   content: z.string(),
   status: z.enum(["completed", "failed"]),
   createdAtMs: z.number().int().nonnegative(),
+  feedback: AgentMessageFeedbackSchema.nullable(),
 })
 export type AgentConversationMessage = z.infer<typeof AgentConversationMessageSchema>
 
