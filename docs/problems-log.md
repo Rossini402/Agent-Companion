@@ -116,3 +116,17 @@
 
 6. **记忆候选判断（文章188）归属阶段划分**
    - 188 的记忆候选判断属于回复'后'处理（在 §⑧ 记忆抽取前加闸门），与本阶段'生成前理解链'目标正交。本文将其列为可选 commit 并给出落点（复用现有 fastRejectMemory 扩成 judgeMemoryCandidate），但是否纳入阶段2、还是与阶段3'记忆抽取 LLM 化'一起做，需确认。
+
+## 阶段3设计 · 安全与质量护栏
+
+1. **user_agent_companions 是否真有 guardrails_prompt 列需核实**
+   - 文章182 依赖 Agent 的 guardrails_prompt 做自定义边界规则，本设计在读 default_prompt 时一并 SELECT guardrails_prompt。但阶段1 代码只 SELECT default_prompt，未确认该列在本项目 user_agent_companions 表中实际存在。若不存在需先加迁移，或安全判断的 agentGuardrails 暂传 null（功能可降级运行，但失去 Agent 级边界差异）。落地前请核对 D1 schema。
+
+2. **deepseek-v4-flash 推理模型可能返回 reasoning 内容污染 JSON**
+   - 推理模型常在 message.content 前混入思考过程或 ```json 包裹。设计已用正则抠取第一个 {…} + zod 兜底 + 2 次重试缓解，但若中转 API 把 reasoning 也塞进 content 且含 { }，正则可能抠错片段。需在真实联调中观察首条返回原文，必要时改用「抠最后一个完整对象」或要求模型用特定分隔符。属需实测确认的风险点。
+
+3. **前置短路分支是否要更新 summary 与 messageCount 的口径**
+   - 短路（refuse/crisis）时本设计把预设 assistant 文本计入 messageCount 并推进 lastMessageAt，但未滚动 summary（避免把危机原话写进长期摘要、与 allowMemoryExtraction=false 的保守取向一致）。这是有意取舍：好处是危机内容不污染摘要，代价是该轮上下文不进摘要、后续对话衔接可能略生硬。是否接受需产品确认；若要衔接更自然，可只把『助手给出了安全提示』这类中性占位写入 summary。
+
+4. **安全判断为同步前置，给首字延迟增加一次非流式 LLM 往返**
+   - S1 是阻塞式（必须在写用户消息和流式回复之前完成），deepseek-v4-flash 作为推理模型的非流式补全可能有数百毫秒到数秒延迟，直接抬高聊天首字时间。文章182 接受此代价（安全 > 体验）。若延迟不可接受，备选：对明显低风险输入做本地 fast-pass 跳过 LLM（但会牺牲部分判断质量），需权衡。
