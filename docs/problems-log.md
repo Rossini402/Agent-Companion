@@ -79,3 +79,20 @@
 
 5. **Hono RPC + monorepo 结构是否采用待项目确认**
    - 文章113/115 的端到端类型链路（hc<AppType>、packages/shared、packages/server-types）假定 monorepo + Hono RPC client 架构。AI-Companion 若是单体或前端用其他框架（如 Vue，按全局规范现役为 Vue3+TS 而非文中的 React+react-hook-form），zodResolver 表单与 RPC client 部分需替换为对应生态方案（Vue 可用 vee-validate 的 zod 适配或 @tanstack 系列），不能直接照搬 React 代码。
+
+## 单元06 · Vercel AI SDK 与 Agent 大脑
+
+1. **模型版本号为课程虚构，落地时需替换**
+   - 文章中出现 claude-opus-4-6 / claude-sonnet-4-5 / gpt-5 / 课程日期 2026-04-01 等版本号与时间，属课程设定的「未来」命名，并非真实可用模型 ID。在 AI-Companion 实际接入时需替换为当前真实可用的模型（如对应的 Claude/GPT/Gemini/DeepSeek 实际 modelId），并以各 Provider 官方文档为准。
+
+2. **部分 API 仍标 experimental，需核对最新 SDK 版本**
+   - experimental_createMCPClient、experimental_useObject、ai/rsc（streamUI/createStreamableUI）等在文章成文时为 experimental，API 可能调整。落地前建议核对项目实际安装的 ai / @ai-sdk/react 版本与官方 changelog，避免按笔记直接抄到的签名与实际不符。
+
+3. **Workers MCP 与 OAuth 包名需确认**
+   - 文章用 @cloudflare/mcp-agent（提到也叫 workers-mcp）、resumable-stream、langfuse-vercel 等包，Cloudflare MCP/OAuth 生态变动较快。实际选型时需确认这些包的当前维护状态与正确包名（Cloudflare 官方 agents/MCP 方案可能已更名或合并）。
+
+4. **文章166-168、171-172、174-175 未逐篇精读，可能遗漏细节**
+   - 本次重点精读了 137-165、169、170、173。未逐字通读的有：166头像存储、167角色管理、168订阅与套餐、171结果逐字输出、172 GitHub 授权登录、174部署Next、175部署Hono。其中 172(GitHub OAuth) 属于认证链路，本文档基于 152/154 的 OAuth 设计原则做了概括，但未覆盖 172 的具体实现代码。若需要 OAuth 登录/绑定的逐步代码细节，建议补读 172。
+
+5. **原文存在笔误，已沿用但需确认**
+   - 文章137 正文里 web/admin 端口在不同段落出现 3000/3001 与 3005/3006 两种说法(脚手架默认 vs 实际改后)，文档采用后文一致的 3005/3006；migration 文件名原文写作 0001_admin_atuh.sql(疑似 auth 拼写笔误)，文档按原文保留。落地时以实际仓库为准。
