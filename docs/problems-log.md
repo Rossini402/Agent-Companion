@@ -96,3 +96,23 @@
 
 5. **原文存在笔误，已沿用但需确认**
    - 文章137 正文里 web/admin 端口在不同段落出现 3000/3001 与 3005/3006 两种说法(脚手架默认 vs 实际改后)，文档采用后文一致的 3005/3006；migration 文件名原文写作 0001_admin_atuh.sql(疑似 auth 拼写笔误)，文档按原文保留。落地时以实际仓库为准。
+
+## 阶段2设计 · 对话理解链
+
+1. **用户消息落库时机后移，与阶段1「LLM 前先落库」原则的取舍**
+   - 阶段1 明确「用户消息先落库（LLM 调用前，失败也不丢）」。但文章 183/184/185/187 都把理解结果写在 user 消息的 metadata 上，要求落库时已有分析结果。本设计把落库点从「LLM 前」后移到「理解链后、生成前」。理解链全程兜底（最坏拿 fallback、不抛错），所以仍能保证落库不被阻塞——但严格来说，若理解链耗时较长（3 次串行 LLM 调用）期间进程崩溃，用户消息会丢。备选方案A：先落库 content（无 metadata），理解链结束后 UPDATE 回填 metadata（多一次写，但完全保留'先落库'语义）。备选方案B（本文采用）：理解链后一次性落库。需确认走 A 还是 B。
+
+2. **理解链串行 3 次 LLM 调用带来的首字延迟**
+   - intent→emotion→relationshipStage 三个 LLM 节点串行执行，叠加在用户发消息到首个 SSE delta 之间，会显著增加首字延迟（推理模型 deepseek-v4-flash 单次判断可能 1-3s，三次累计可能 3-9s）。文章用 LangGraph 也是串行，但本项目是陪伴聊天，延迟敏感。需确认是否接受，或 v1 先只上 intent+route+policy（砍掉 emotion/stage 的 LLM 调用，用规则近似），后续再补。
+
+3. **deepseek-v4-flash 是推理模型，response_format:json_object 支持度未实测**
+   - DeepSeek 推理模型（带思维链）对 response_format:json_object 的支持，以及是否会在 content 前混入推理过程文本，需真实联调确认。若 content 夹带思维链，extractJson 的'截取首个 {...}'可能误截。退路已设计（剥围栏+截子串+重试+去 response_format），但实际行为需在验证步骤6前先单独打一次真实调用确认 content 形态。
+
+4. **agentGuardrails 复用 default_prompt，无独立边界字段**
+   - 文章中意图/情绪/关系阶段判断都吃 agentGuardrails（Agent 自定义边界规则），来自 agentPrompt.guardrailsPrompt。但阶段1 user_agent_companions 只有 default_prompt，无独立 guardrails 列。本设计用 default_prompt 兼任 agentGuardrails。若需要真正的边界规则隔离，需在 Agent 资产表加字段（属阶段1/资产侧改动，本阶段未纳入）。
+
+5. **安全边界（safety）在 v1 缺位，理解链顺序与文章不完全一致**
+   - 文章链路是 safety→intent→emotion→stage→route→policy，且 safety 结果会喂给后续每个节点、并在 soft_boundary 时强制 route=calm_deescalation。阶段1 无安全层，本设计 safety 全程置 null（metadata 占位、route/policy 里 safety 分支短路为不触发）。这意味着 v1 缺少'高风险输入先拦截/降温'能力。需确认安全边界是放在阶段2补齐，还是单列阶段（建议单列，避免本阶段范围膨胀）。
+
+6. **记忆候选判断（文章188）归属阶段划分**
+   - 188 的记忆候选判断属于回复'后'处理（在 §⑧ 记忆抽取前加闸门），与本阶段'生成前理解链'目标正交。本文将其列为可选 commit 并给出落点（复用现有 fastRejectMemory 扩成 judgeMemoryCandidate），但是否纳入阶段2、还是与阶段3'记忆抽取 LLM 化'一起做，需确认。
