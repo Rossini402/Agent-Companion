@@ -2,6 +2,7 @@ import type {
   ConversationIntent,
   ConversationEmotion,
   ConversationRelationshipStage,
+  ConversationSafety,
   EmotionRoute,
   ReplyPolicy,
 } from "@ai-companion/contracts"
@@ -57,7 +58,7 @@ export const fallbackReplyPolicy: ReplyPolicy = {
  * 回复策略（代码规则，文章185+187）。把意图/情绪/关系阶段/路由收敛成可执行的回复约束。
  */
 export function buildReplyPolicy(input: {
-  safety: null
+  safety: ConversationSafety | null
   intent: ConversationIntent
   emotion: ConversationEmotion
   relationshipStage: ConversationRelationshipStage
