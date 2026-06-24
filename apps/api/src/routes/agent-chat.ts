@@ -1,8 +1,14 @@
 import { Hono } from "hono"
 import { streamSSE } from "hono/streaming"
-import { InboxChatRequestSchema, UpdateAgentMemoryRequestSchema } from "@ai-companion/contracts"
-import { createDb, agentMemories } from "@ai-companion/db"
-import { and, eq } from "drizzle-orm"
+import {
+  InboxChatRequestSchema,
+  UpdateAgentMemoryRequestSchema,
+  SubmitAgentMessageFeedbackRequestSchema,
+  UpsertAgentCarePlanRequestSchema,
+  GenerateAgentCareEventRequestSchema,
+} from "@ai-companion/contracts"
+import { createDb, agentMemories, agentCarePlans, agentCareEvents } from "@ai-companion/db"
+import { and, desc, eq } from "drizzle-orm"
 import type { AppEnv } from "../env"
 import { buildAgentChatMessages } from "../services/agent-chat/build-prompt"
 import {
@@ -19,9 +25,23 @@ import { streamDeepSeekChat } from "../services/llm/deepseek"
 import { analyzeConversationUnderstanding } from "../services/agent-chat/understanding"
 import { analyzeConversationSafety, buildBoundaryResponse } from "../services/agent-chat/safety"
 import { evaluateReplyQuality } from "../services/agent-chat/reply-quality"
+import {
+  listRecentFeedbacks,
+  findMessageForFeedback,
+  upsertFeedback,
+  listMessagesWithFeedback,
+} from "../services/agent-chat/feedback"
+import {
+  findOrCreateCarePlan,
+  buildProactiveCareMessage,
+  insertCareEvent,
+  markCareEventsRead,
+  calculateNextCareRunAtMs,
+} from "../services/agent-chat/care"
 
 const RECENT_MESSAGE_LIMIT = 18
 const MEMORY_INJECTION_LIMIT = 8
+const FEEDBACK_INJECTION_LIMIT = 6
 
 export const agentChatRoutes = new Hono<AppEnv>()
 
@@ -54,6 +74,8 @@ agentChatRoutes.post("/chat", async (c) => {
     limit: RECENT_MESSAGE_LIMIT,
   })
   const activeMemories = await listActiveMemories(db, { userId, agentId, limit: MEMORY_INJECTION_LIMIT })
+  // ②.5 阶段4 读最近反馈（容错，注入 prompt）
+  const recentFeedbacks = await listRecentFeedbacks(db, { userId, agentId, limit: FEEDBACK_INJECTION_LIMIT })
 
   // 读取 Agent 默认人设（理解链与 prompt 都要用作 guardrails/人设，上移到落库之前）
   const agentRow = await c.env.DB.prepare(
@@ -131,6 +153,7 @@ agentChatRoutes.post("/chat", async (c) => {
         history,
         latestUserText,
         understanding,
+        recentFeedbacks,
       })
     : []
 
@@ -281,4 +304,167 @@ agentChatRoutes.delete("/memories/:id", async (c) => {
     .set({ status: "deleted", updatedAtMs: Date.now() })
     .where(and(eq(agentMemories.id, id), eq(agentMemories.userId, userId)))
   return c.json({ ok: true })
+})
+
+// ===== 阶段4 · 用户反馈闭环（189） =====
+
+/** POST /agent/messages/:messageId/feedback?agentId= —— 提交/切换反馈（upsert） */
+agentChatRoutes.post("/messages/:messageId/feedback", async (c) => {
+  const userId = c.get("userId")
+  const messageId = c.req.param("messageId")
+  const agentId = c.req.query("agentId")
+  if (!agentId) return c.json({ error: "missing_agent_id" }, 400)
+  const parsed = SubmitAgentMessageFeedbackRequestSchema.safeParse(await c.req.json())
+  if (!parsed.success) return c.json({ error: "invalid_request", issues: parsed.error.issues }, 400)
+
+  const db = createDb(c.env.DB)
+  const msg = await findMessageForFeedback(db, { userId, agentId, messageId })
+  if (!msg) return c.json({ error: "message_not_found" }, 404)
+  const nowMs = Date.now()
+  await upsertFeedback(db, {
+    userId,
+    agentId,
+    conversationId: msg.conversationId,
+    messageId,
+    rating: parsed.data.rating,
+    reason: parsed.data.reason ?? null,
+    note: parsed.data.note ?? null,
+    nowMs,
+  })
+  return c.json({ ok: true, rating: parsed.data.rating, updatedAtMs: nowMs })
+})
+
+// ===== 阶段4 · 主动关怀（190） =====
+
+/** POST /agent/care/:agentId/generate —— 手动生成关怀消息（写真实历史） */
+agentChatRoutes.post("/care/:agentId/generate", async (c) => {
+  const userId = c.get("userId")
+  const agentId = c.req.param("agentId")
+  const parsed = GenerateAgentCareEventRequestSchema.safeParse(await c.req.json().catch(() => ({})))
+  if (!parsed.success) return c.json({ error: "invalid_request", issues: parsed.error.issues }, 400)
+
+  const db = createDb(c.env.DB)
+  const nowMs = Date.now()
+  const plan = await findOrCreateCarePlan(db, { userId, agentId, nowMs })
+  const scene = parsed.data.scene ?? plan.scenes[0] ?? "long_absence"
+  const conversation = await getOrCreateConversation(db, { userId, agentId, nowMs })
+  const message = buildProactiveCareMessage({ scene, tone: plan.tone, customPrompt: plan.customPrompt })
+
+  const messageId = crypto.randomUUID()
+  await insertMessage(db, {
+    id: messageId,
+    conversationId: conversation.id,
+    userId,
+    agentId,
+    role: "assistant",
+    content: message,
+    status: "completed",
+    metadataJson: JSON.stringify({ source: "proactive_care", scene, tone: plan.tone }),
+    nowMs,
+  })
+  const eventId = await insertCareEvent(db, {
+    userId,
+    agentId,
+    carePlanId: plan.id,
+    conversationId: conversation.id,
+    messageId,
+    scene,
+    message,
+    nowMs,
+  })
+  await updateConversationAfterMessage(db, {
+    conversationId: conversation.id,
+    summary: conversation.summary,
+    messageCount: conversation.messageCount + 1,
+    lastMessageAtMs: nowMs,
+    nowMs,
+  })
+  return c.json({ eventId, messageId, conversationId: conversation.id, scene, message })
+})
+
+/** GET /agent/care/:agentId/plan —— 读关怀计划（无则建默认） */
+agentChatRoutes.get("/care/:agentId/plan", async (c) => {
+  const userId = c.get("userId")
+  const agentId = c.req.param("agentId")
+  const db = createDb(c.env.DB)
+  const plan = await findOrCreateCarePlan(db, { userId, agentId, nowMs: Date.now() })
+  return c.json({
+    id: plan.id,
+    agentId: plan.agentId,
+    enabled: plan.enabledBool,
+    frequency: plan.frequency,
+    preferredTime: plan.preferredTime,
+    scenes: plan.scenes,
+    tone: plan.tone,
+    customPrompt: plan.customPrompt,
+    nextRunAtMs: plan.nextRunAtMs,
+    createdAtMs: plan.createdAtMs,
+    updatedAtMs: plan.updatedAtMs,
+  })
+})
+
+/** PATCH /agent/care/:agentId/plan —— 保存计划并计算 nextRun */
+agentChatRoutes.patch("/care/:agentId/plan", async (c) => {
+  const userId = c.get("userId")
+  const agentId = c.req.param("agentId")
+  const parsed = UpsertAgentCarePlanRequestSchema.safeParse(await c.req.json())
+  if (!parsed.success) return c.json({ error: "invalid_request", issues: parsed.error.issues }, 400)
+
+  const db = createDb(c.env.DB)
+  const nowMs = Date.now()
+  await findOrCreateCarePlan(db, { userId, agentId, nowMs })
+  const d = parsed.data
+  const nextRunAtMs = calculateNextCareRunAtMs({
+    enabled: d.enabled,
+    frequency: d.frequency,
+    preferredTime: d.preferredTime ?? null,
+    nowMs,
+  })
+  await db
+    .update(agentCarePlans)
+    .set({
+      enabled: d.enabled ? 1 : 0,
+      frequency: d.frequency,
+      preferredTime: d.preferredTime ?? null,
+      scenesJson: JSON.stringify(d.scenes),
+      tone: d.tone,
+      customPrompt: d.customPrompt ?? null,
+      nextRunAtMs,
+      updatedAtMs: nowMs,
+    })
+    .where(and(eq(agentCarePlans.userId, userId), eq(agentCarePlans.agentId, agentId)))
+  return c.json({ ok: true, nextRunAtMs })
+})
+
+/** GET /agent/care/:agentId/events —— 关怀事件列表 */
+agentChatRoutes.get("/care/:agentId/events", async (c) => {
+  const userId = c.get("userId")
+  const agentId = c.req.param("agentId")
+  const db = createDb(c.env.DB)
+  const rows = await db
+    .select()
+    .from(agentCareEvents)
+    .where(and(eq(agentCareEvents.userId, userId), eq(agentCareEvents.agentId, agentId)))
+    .orderBy(desc(agentCareEvents.generatedAtMs))
+    .limit(20)
+  return c.json({ agentId, events: rows })
+})
+
+/** GET /agent/conversations/:agentId —— 恢复历史（标已读 + 反馈回显） */
+agentChatRoutes.get("/conversations/:agentId", async (c) => {
+  const userId = c.get("userId")
+  const agentId = c.req.param("agentId")
+  const db = createDb(c.env.DB)
+  const nowMs = Date.now()
+  await markCareEventsRead(db, { userId, agentId, nowMs })
+  const conversation = await getOrCreateConversation(db, { userId, agentId, nowMs })
+  const messages = await listMessagesWithFeedback(db, { conversationId: conversation.id, userId, limit: 100 })
+  return c.json({
+    conversationId: conversation.id,
+    agentId,
+    title: conversation.title,
+    summary: conversation.summary,
+    messageCount: conversation.messageCount,
+    messages,
+  })
 })

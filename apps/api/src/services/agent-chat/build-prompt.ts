@@ -12,6 +12,7 @@ export type ChatCompletionMessage = { role: ChatRole; content: string }
 
 export type ActiveMemory = { type: string; importance: number; content: string }
 export type HistoryMessage = { role: "user" | "assistant"; content: string }
+export type RecentFeedback = { rating: "positive" | "negative"; reason: string | null; content: string }
 
 /** 清洗 D1 中存储的消息内容，空白消息返回空串以便跳过 */
 export function normalizeStoredMessage(content: string): string {
@@ -31,8 +32,18 @@ export function buildAgentChatMessages(input: {
   history: HistoryMessage[]
   latestUserText: string
   understanding?: ConversationUnderstanding | null
+  recentFeedbacks?: RecentFeedback[]
 }): ChatCompletionMessage[] {
-  const { agentDefaultPrompt, activeMemories, summary, conversation, history, latestUserText, understanding } = input
+  const {
+    agentDefaultPrompt,
+    activeMemories,
+    summary,
+    conversation,
+    history,
+    latestUserText,
+    understanding,
+    recentFeedbacks = [],
+  } = input
 
   const systemContent = [
     agentDefaultPrompt || "你是 AI Agent Web 控制台里的聊天陪伴助手。",
@@ -53,6 +64,16 @@ export function buildAgentChatMessages(input: {
         ].join("\n")
       : "",
     summary ? `此前对话摘要：${summary}` : "",
+    // 阶段4 反馈段（文章189）：正向=偏好风格，负向=需避免；不得在回复中提及评分/反馈
+    recentFeedbacks.length > 0
+      ? [
+          "近期用户对该 Agent 回复的反馈：",
+          ...recentFeedbacks.map(
+            (f) => `- [${f.rating === "positive" ? "正向" : "负向"}${f.reason ? "/" + f.reason : ""}] ${f.content}`,
+          ),
+          "请把正向反馈视为用户偏好的表达风格，把负向反馈视为需要避免的问题；不要在回复中提到评分、点赞、点踩或反馈记录。",
+        ].join("\n")
+      : "",
   ]
     .filter(Boolean)
     .join("\n")
