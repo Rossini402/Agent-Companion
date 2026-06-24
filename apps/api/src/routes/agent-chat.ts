@@ -16,6 +16,7 @@ import {
 import { rollSummary } from "../services/agent-chat/summary"
 import { extractMemoriesFromTurn, saveExtractedMemories } from "../services/agent-chat/memory-extraction"
 import { streamDeepSeekChat } from "../services/llm/deepseek"
+import { analyzeConversationUnderstanding } from "../services/agent-chat/understanding"
 
 const RECENT_MESSAGE_LIMIT = 18
 const MEMORY_INJECTION_LIMIT = 8
@@ -52,7 +53,33 @@ agentChatRoutes.post("/chat", async (c) => {
   })
   const activeMemories = await listActiveMemories(db, { userId, agentId, limit: MEMORY_INJECTION_LIMIT })
 
-  // ① 用户消息先落库（LLM 调用前，失败也不丢）
+  // 读取 Agent 默认人设（理解链与 prompt 都要用作 guardrails/人设，上移到落库之前）
+  const agentRow = await c.env.DB.prepare(
+    "SELECT default_prompt FROM user_agent_companions WHERE id = ? AND user_id = ?",
+  )
+    .bind(agentId, userId)
+    .first<{ default_prompt: string | null }>()
+
+  const llmConfig = {
+    apiKey: c.env.DEEPSEEK_API_KEY,
+    model: payload.llmConfig?.model ?? c.env.DEEPSEEK_MODEL,
+    baseUrl: c.env.DEEPSEEK_BASE_URL,
+  }
+
+  // ★ 阶段2 对话理解链（读历史/记忆之后、落库之前；全程兜底，绝不阻塞主回复）
+  const understanding = await analyzeConversationUnderstanding({
+    config: llmConfig,
+    agentName: payload.conversation.name,
+    agentGuardrails: agentRow?.default_prompt ?? null,
+    activeMemories,
+    recentMessages: history,
+    conversationSummary: conversation.summary,
+    messageCount: conversation.messageCount,
+    userText: latestUserText,
+    signal: c.req.raw.signal,
+  })
+
+  // ① 用户消息落库（带理解结果 metadata；理解链已全程兜底，不破坏「失败也不丢」）
   let sourceUserMessageId: string | null = null
   if (latestUserText) {
     sourceUserMessageId = crypto.randomUUID()
@@ -64,6 +91,7 @@ agentChatRoutes.post("/chat", async (c) => {
       role: "user",
       content: latestUserText,
       status: "completed",
+      metadataJson: JSON.stringify(understanding),
       nowMs,
     })
     await updateConversationAfterMessage(db, {
@@ -74,14 +102,7 @@ agentChatRoutes.post("/chat", async (c) => {
     })
   }
 
-  // 读取 Agent 默认人设（来自 Agent 资产表）
-  const agentRow = await c.env.DB.prepare(
-    "SELECT default_prompt FROM user_agent_companions WHERE id = ? AND user_id = ?",
-  )
-    .bind(agentId, userId)
-    .first<{ default_prompt: string | null }>()
-
-  // ④ 组装 prompt
+  // ④ 组装 prompt（注入阶段2 理解链结果）
   const promptMessages = buildAgentChatMessages({
     agentDefaultPrompt: agentRow?.default_prompt ?? null,
     activeMemories,
@@ -89,6 +110,7 @@ agentChatRoutes.post("/chat", async (c) => {
     conversation: payload.conversation,
     history,
     latestUserText,
+    understanding,
   })
 
   // ⑤ 流式生成 → 边吐边写 SSE，结束后做后处理
@@ -96,15 +118,10 @@ agentChatRoutes.post("/chat", async (c) => {
     let assistantText = ""
     let failed = false
     try {
-      for await (const delta of streamDeepSeekChat(
-        {
-          apiKey: c.env.DEEPSEEK_API_KEY,
-          model: payload.llmConfig?.model ?? c.env.DEEPSEEK_MODEL,
-          baseUrl: c.env.DEEPSEEK_BASE_URL,
-        },
-        promptMessages,
-        { temperature: payload.llmConfig?.temperature, signal: c.req.raw.signal },
-      )) {
+      for await (const delta of streamDeepSeekChat(llmConfig, promptMessages, {
+        temperature: payload.llmConfig?.temperature,
+        signal: c.req.raw.signal,
+      })) {
         assistantText += delta
         await sse.writeSSE({ event: "delta", data: delta })
       }
