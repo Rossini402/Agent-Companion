@@ -62,3 +62,20 @@
 
 4. **StateSchema/MessagesValue/ReducedValue 等 API 名称偏新，需与官方对齐**
    - 文中大量使用 `new StateSchema({...})`、`MessagesValue`、`new ReducedValue(schema, { reducer })`、`GraphNode`、`ConditionalEdgeRouter` 等。这套是较新的 LangGraph.js 写法，与早期官方文档常见的 `Annotation.Root`/`Annotation` API 差异较大。落地时建议先以实际安装版本的类型定义为准，确认这些符号确实从 `@langchain/langgraph` 导出。
+
+## 单元05 · 工程底座
+
+1. **中文 embedding 模型选型需结合实际效果定**
+   - 文章96指出 Workers AI 自带的 bge 系列对中文'凑合'，推荐 bge-m3 或 text-embedding-3-large。AI-Companion 的长期记忆/RAG 检索精度依赖中文 embedding 质量，最终选型（自托管 vs 第三方付费）需根据真实语料做检索精度评测后确认，本笔记无法替项目决策。
+
+2. **群聊场景是否上 Durable Objects 需架构层确认**
+   - 文章97的 DO+WebSocket 方案非常契合群聊底座(191-195)与主动关怀(190)，但 DO 有计费、并发瓶颈（单实例每秒几千请求即瓶颈）与运维复杂度。是否用 DO、还是沿用无状态 + LangGraph 编排，需结合群聊并发量与现有 LangGraph 实现做架构权衡。
+
+3. **密码哈希算法在本项目的实际实现待核实**
+   - 文章93明确 SHA-256 加盐仅教学用，生产应用 PBKDF2。需确认 AI-Companion 现有认证实现(155「服务端 token 签发与算法」、160「jwt.ts」)是否已用 PBKDF2/合规算法，避免沿用教学示例的弱哈希。
+
+4. **Zod 版本以 v3 为准，落地前需确认项目实际依赖版本**
+   - 专栏明确基于 Zod v3（^3.24.1），并指出 v4 有破坏性差异：z.string().email() → 顶层 z.email()、错误格式化 API 变化、.deepPartial() 被移除（需手工逐层 partial）。若 AI-Companion 项目实际安装的是 Zod v4，文中部分 API（尤其 email/deepPartial/错误格式化）需相应调整，建议先 `pnpm list zod` 确认版本再照搬代码。
+
+5. **Hono RPC + monorepo 结构是否采用待项目确认**
+   - 文章113/115 的端到端类型链路（hc<AppType>、packages/shared、packages/server-types）假定 monorepo + Hono RPC client 架构。AI-Companion 若是单体或前端用其他框架（如 Vue，按全局规范现役为 Vue3+TS 而非文中的 React+react-hook-form），zodResolver 表单与 RPC client 部分需替换为对应生态方案（Vue 可用 vee-validate 的 zod 适配或 @tanstack 系列），不能直接照搬 React 代码。
