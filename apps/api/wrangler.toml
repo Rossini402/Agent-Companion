@@ -1,0 +1,17 @@
+name = "ai-companion-api"
+main = "src/index.ts"
+compatibility_date = "2024-09-23"
+compatibility_flags = ["nodejs_compat"]
+
+# 非密钥配置（密钥 DEEPSEEK_API_KEY 走 .dev.vars 本地 / `wrangler secret put` 生产）
+[vars]
+DEEPSEEK_MODEL = "deepseek-v4-flash"
+DEEPSEEK_BASE_URL = "https://api.deepseek.com"
+
+# 本地开发用 dummy id 即可（wrangler dev --local 走本地 SQLite，不需要登录）。
+# 上线前用 `pnpm --filter @ai-companion/api db:generate-id` 创建真实库，把 id 换上来。
+[[d1_databases]]
+binding = "DB"
+database_name = "ai-companion"
+database_id = "00000000-0000-0000-0000-000000000000"
+migrations_dir = "migrations"
