@@ -1,4 +1,10 @@
-import type { InboxChatConversation } from "@ai-companion/contracts"
+import type { InboxChatConversation, ConversationUnderstanding } from "@ai-companion/contracts"
+import {
+  getIntentSystemInstruction,
+  getRelationshipStageSystemInstruction,
+  getEmotionRouteSystemInstruction,
+  getReplyPolicySystemInstruction,
+} from "./understanding/prompt-inject"
 
 export type ChatRole = "system" | "user" | "assistant"
 export type ChatCompletionMessage = { role: ChatRole; content: string }
@@ -23,14 +29,20 @@ export function buildAgentChatMessages(input: {
   conversation: InboxChatConversation
   history: HistoryMessage[]
   latestUserText: string
+  understanding?: ConversationUnderstanding | null
 }): ChatCompletionMessage[] {
-  const { agentDefaultPrompt, activeMemories, summary, conversation, history, latestUserText } = input
+  const { agentDefaultPrompt, activeMemories, summary, conversation, history, latestUserText, understanding } = input
 
   const systemContent = [
     agentDefaultPrompt || "你是 AI Agent Web 控制台里的聊天陪伴助手。",
     "请基于当前聊天对象、关系氛围和用户意图，用简洁、自然的中文回答用户。",
     "如果用户要求起草回复，请直接给出可发送的聊天内容，避免正式公文格式和职场汇报语气。",
     "你的建议应尊重双方边界，避免操控式话术、制造焦虑或诱导过度解读。",
+    // 阶段2 对话理解链注入（人设之后、长期记忆之前）：意图→关系阶段→情绪/路由→回复策略
+    getIntentSystemInstruction(understanding?.intent),
+    getRelationshipStageSystemInstruction(understanding?.relationshipStage),
+    getEmotionRouteSystemInstruction(understanding?.emotion, understanding?.route),
+    getReplyPolicySystemInstruction(understanding?.replyPolicy),
     activeMemories.length > 0
       ? [
           "以下是用户与该 Agent 的长期记忆，请优先尊重：",
