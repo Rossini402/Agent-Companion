@@ -17,6 +17,8 @@ import { rollSummary } from "../services/agent-chat/summary"
 import { extractMemoriesFromTurn, saveExtractedMemories } from "../services/agent-chat/memory-extraction"
 import { streamDeepSeekChat } from "../services/llm/deepseek"
 import { analyzeConversationUnderstanding } from "../services/agent-chat/understanding"
+import { analyzeConversationSafety, buildBoundaryResponse } from "../services/agent-chat/safety"
+import { evaluateReplyQuality } from "../services/agent-chat/reply-quality"
 
 const RECENT_MESSAGE_LIMIT = 18
 const MEMORY_INJECTION_LIMIT = 8
@@ -66,20 +68,35 @@ agentChatRoutes.post("/chat", async (c) => {
     baseUrl: c.env.DEEPSEEK_BASE_URL,
   }
 
-  // ★ 阶段2 对话理解链（读历史/记忆之后、落库之前；全程兜底，绝不阻塞主回复）
-  const understanding = await analyzeConversationUnderstanding({
+  // ★ 阶段3 S1：安全边界判断（最前，写用户消息之前；失败保守兜底，绝不当 safe）
+  const safety = await analyzeConversationSafety({
     config: llmConfig,
     agentName: payload.conversation.name,
     agentGuardrails: agentRow?.default_prompt ?? null,
     activeMemories,
     recentMessages: history,
-    conversationSummary: conversation.summary,
-    messageCount: conversation.messageCount,
     userText: latestUserText,
     signal: c.req.raw.signal,
   })
+  const boundaryText = buildBoundaryResponse(safety)
 
-  // ① 用户消息落库（带理解结果 metadata；理解链已全程兜底，不破坏「失败也不丢」）
+  // ★ 阶段2 对话理解链（非短路时才需要；把 safety 接进理解链，顺序 safety→intent→…，全程兜底）
+  const understanding = boundaryText
+    ? null
+    : await analyzeConversationUnderstanding({
+        config: llmConfig,
+        agentName: payload.conversation.name,
+        agentGuardrails: agentRow?.default_prompt ?? null,
+        activeMemories,
+        recentMessages: history,
+        conversationSummary: conversation.summary,
+        messageCount: conversation.messageCount,
+        userText: latestUserText,
+        signal: c.req.raw.signal,
+        safety,
+      })
+
+  // ① 用户消息落库（短路写 safety；正常写完整 understanding，已含 safety）
   let sourceUserMessageId: string | null = null
   if (latestUserText) {
     sourceUserMessageId = crypto.randomUUID()
@@ -91,7 +108,9 @@ agentChatRoutes.post("/chat", async (c) => {
       role: "user",
       content: latestUserText,
       status: "completed",
-      metadataJson: JSON.stringify(understanding),
+      metadataJson: understanding
+        ? JSON.stringify(understanding)
+        : JSON.stringify({ analysisVersion: "conversation-safety-v1", safety }),
       nowMs,
     })
     await updateConversationAfterMessage(db, {
@@ -102,19 +121,52 @@ agentChatRoutes.post("/chat", async (c) => {
     })
   }
 
-  // ④ 组装 prompt（注入阶段2 理解链结果）
-  const promptMessages = buildAgentChatMessages({
-    agentDefaultPrompt: agentRow?.default_prompt ?? null,
-    activeMemories,
-    summary: conversation.summary,
-    conversation: payload.conversation,
-    history,
-    latestUserText,
-    understanding,
-  })
+  // ④ 组装 prompt（注入安全 + 阶段2 理解链结果；短路分支不用）
+  const promptMessages = understanding
+    ? buildAgentChatMessages({
+        agentDefaultPrompt: agentRow?.default_prompt ?? null,
+        activeMemories,
+        summary: conversation.summary,
+        conversation: payload.conversation,
+        history,
+        latestUserText,
+        understanding,
+      })
+    : []
 
   // ⑤ 流式生成 → 边吐边写 SSE，结束后做后处理
   return streamSSE(c, async (sse) => {
+    // ★ 阶段3 前置短路：refuse / crisis_support 不进 DeepSeek，直接返回预设安全回复
+    if (boundaryText) {
+      await sse.writeSSE({ event: "delta", data: boundaryText })
+      const sId = crypto.randomUUID()
+      const sMs = Date.now()
+      const sGuard = evaluateReplyQuality({ assistantText: boundaryText, replyPolicy: null })
+      await insertMessage(db, {
+        id: sId,
+        conversationId: conversation.id,
+        userId,
+        agentId,
+        role: "assistant",
+        content: boundaryText,
+        status: "completed",
+        metadataJson: JSON.stringify({ boundaryShortCircuit: true, safety, guard: sGuard }),
+        nowMs: sMs,
+      })
+      await updateConversationAfterMessage(db, {
+        conversationId: conversation.id,
+        summary: conversation.summary,
+        messageCount: conversation.messageCount + (latestUserText ? 2 : 1),
+        lastMessageAtMs: sMs,
+        nowMs: sMs,
+      })
+      await sse.writeSSE({
+        event: "done",
+        data: JSON.stringify({ conversationId: conversation.id, assistantMessageId: sId, status: "completed" }),
+      })
+      return
+    }
+
     let assistantText = ""
     let failed = false
     try {
@@ -131,9 +183,10 @@ agentChatRoutes.post("/chat", async (c) => {
       await sse.writeSSE({ event: "error", data: String(err instanceof Error ? err.message : err) })
     }
 
-    // ⑥ assistant 落库（失败也落，标 failed，便于展示与重试）
+    // ⑥ assistant 落库 + Q1 回复质量守卫（只记录不拦截；metadata 合并 safety + guard）
     const assistantMessageId = crypto.randomUUID()
     const afterMs = Date.now()
+    const guard = evaluateReplyQuality({ assistantText, replyPolicy: understanding?.replyPolicy ?? null })
     await insertMessage(db, {
       id: assistantMessageId,
       conversationId: conversation.id,
@@ -143,9 +196,12 @@ agentChatRoutes.post("/chat", async (c) => {
       content: assistantText,
       status: failed ? "failed" : "completed",
       metadataJson: JSON.stringify({
-        model: payload.llmConfig?.model ?? c.env.DEEPSEEK_MODEL,
+        model: llmConfig.model,
         promptMessageCount: promptMessages.length,
         injectedMemories: activeMemories.length,
+        boundaryShortCircuit: false,
+        safety,
+        guard,
       }),
       nowMs: afterMs,
     })
@@ -165,18 +221,20 @@ agentChatRoutes.post("/chat", async (c) => {
         nowMs: afterMs,
       })
 
-      // ⑧ 长期记忆抽取（失败不影响回复）
-      try {
-        const extracted = await extractMemoriesFromTurn({ userText: latestUserText, assistantText })
-        await saveExtractedMemories(db, {
-          userId,
-          agentId,
-          sourceMessageId: sourceUserMessageId,
-          memories: extracted,
-          nowMs: Date.now(),
-        })
-      } catch (err) {
-        console.error("memory extraction failed", err)
+      // ⑧ 长期记忆抽取（★ 阶段3 safety 闸门：allowMemoryExtraction=false 时跳过）
+      if (safety.allowMemoryExtraction) {
+        try {
+          const extracted = await extractMemoriesFromTurn({ userText: latestUserText, assistantText })
+          await saveExtractedMemories(db, {
+            userId,
+            agentId,
+            sourceMessageId: sourceUserMessageId,
+            memories: extracted,
+            nowMs: Date.now(),
+          })
+        } catch (err) {
+          console.error("memory extraction failed", err)
+        }
       }
     }
 
