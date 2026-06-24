@@ -31,3 +31,20 @@
 
 3. **文章10 第2节并行串行延迟示例的具体数字与第4/5节表格不完全自洽**
    - 第5节文字算例用'查询理解200ms + 记忆检索100ms + 情绪读取10ms'，而第4节节点表给出查询理解100-300ms、记忆检索50-150ms、情绪读取5-15ms。数字是举例区间取值，不影响结论（并行价值在可扩展性而非省这10ms），但若直接引用具体数值需注意它们是示意而非测得基准。
+
+## 单元03 · LangChain 实战
+
+1. **createAgent 的 model 入参形态在文章内不一致，需确认 v1 真实签名**
+   - 文章26/27/28 把 ChatOpenAI 实例传给 createAgent({ model })；文章35/38/39/40/41/42/43 又直接传字符串 'openai:gpt-4.1-mini' 或 'gpt-4.1'。两种写法散落各处未统一说明，且字符串形态依赖 OPENAI_API_KEY 而示例多用 DeepSeek。落地时需核对 LangChain.js v1 中 createAgent 对 model 字段到底接受实例、字符串还是两者皆可，避免照抄报错。
+
+2. **summarizationMiddleware 的参数结构未在正文给出依据**
+   - 文章35 用 summarizationMiddleware({ model, trigger: { tokens: 4000 }, keep: { messages: 20 } })，但 trigger/keep 的字段语义和单位（tokens vs messages）未展开，也未说明触发后保留策略细节。这是新 API，建议对照官方文档核实字段名再用。
+
+3. **RunnableWithMessageHistory 依赖 classic 包，与'新代码优先'存在张力**
+   - 文章35 把 RunnableWithMessageHistory 列为'LCEL 链优先选择'，但其历史存储 ChatMessageHistory 来自 @langchain/classic/stores/message/in_memory；同时文章又反复强调 classic 仅作旧资料对照。LCEL 链的短期记忆方案在 v1 里是否仍推荐、是否有非 classic 的替代，需确认。
+
+4. **withStructuredOutput 示例临时切到 OpenAI，DeepSeek 可用性未明确**
+   - 文章30 指出 withStructuredOutput 可用性取决于 provider/model，示例切到 gpt-4o-mini。本项目若主用 DeepSeek，需实测 deepseek-chat 是否支持结构化输出；不支持则必须走 JsonOutputParser + zod 退路，文档应明确这一项目级结论。
+
+5. **Callbacks 事件方法签名为简化版，runId 等参数顺序需以源码为准**
+   - 文章43 的 handleChatModelStart/handleToolStart 等只列了 (serialized, input, runId) 三个参数，但 LangChain 实际回调通常还带 parentRunId、tags、metadata、extraParams 等。自建 handler 落地时应以 BaseCallbackHandler 真实方法签名为准，文中签名为教学简化。
