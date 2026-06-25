@@ -130,5 +130,9 @@ export function useAgentChat() {
     [sending],
   )
 
-  return { messages, sending, loadingHistory, send, reload, setMessages }
+  const markFeedback = useCallback((messageId: string, rating: "positive" | "negative") => {
+    setMessages((prev) => prev.map((m) => (m.id === messageId ? { ...m, feedback: { rating } } : m)))
+  }, [])
+
+  return { messages, sending, loadingHistory, send, reload, setMessages, markFeedback }
 }
