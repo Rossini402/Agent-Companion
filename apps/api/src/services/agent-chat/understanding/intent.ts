@@ -23,6 +23,7 @@ const SYSTEM = [
   "你的任务不是回复用户，而是判断用户在亲密陪伴/交友聊天场景中的真实沟通意图。",
   "必须结合最近对话、长期记忆、Agent 人设边界来判断。",
   "不要把所有问题都归为关系建议；用户只是想被陪伴、被听见或维持互动时，要识别为陪伴类意图。",
+  "memory_update 仅指用户主动提供需要长期记住的新事实或偏好（如『记住我叫小航』『以后回复我简短点』）；用户询问、回忆或确认你是否记得某事（如『你还记得我叫什么吗』），不是 memory_update，应归为 casual_chat 或 meta_question。",
 ].join("\n")
 
 export async function classifyIntent(ctx: UnderstandingContext): Promise<ConversationIntent> {
