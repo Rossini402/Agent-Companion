@@ -1,19 +1,21 @@
 "use client"
 
 import { useEffect, useRef, useState } from "react"
-import { BookMarked } from "lucide-react"
+import { BookMarked, HeartHandshake } from "lucide-react"
 import { useAgentChat } from "@/lib/useAgentChat"
 import { useSubmitFeedback } from "@/lib/queries"
 import { DEFAULT_CONVERSATION } from "@/lib/api"
 import { MessageBubble } from "./MessageBubble"
 import { Composer } from "./Composer"
 import { MemoryPanel } from "./MemoryPanel"
+import { CarePanel } from "./CarePanel"
 import { Button } from "./ui/button"
 
 export function ChatView() {
-  const { messages, sending, loadingHistory, send, markFeedback } = useAgentChat()
+  const { messages, sending, loadingHistory, send, reload, markFeedback } = useAgentChat()
   const submitFeedback = useSubmitFeedback()
   const [memoryOpen, setMemoryOpen] = useState(false)
+  const [careOpen, setCareOpen] = useState(false)
   const logRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -32,10 +34,16 @@ export function ChatView() {
           <b className="text-base">{DEFAULT_CONVERSATION.name}</b>
           <span className="ml-2 text-xs text-neutral-400">{DEFAULT_CONVERSATION.headline} · DeepSeek 流式</span>
         </div>
-        <Button variant="ghost" size="sm" onClick={() => setMemoryOpen(true)}>
-          <BookMarked size={16} />
-          记忆库
-        </Button>
+        <div className="flex gap-1">
+          <Button variant="ghost" size="sm" onClick={() => setCareOpen(true)}>
+            <HeartHandshake size={16} />
+            关怀
+          </Button>
+          <Button variant="ghost" size="sm" onClick={() => setMemoryOpen(true)}>
+            <BookMarked size={16} />
+            记忆库
+          </Button>
+        </div>
       </header>
 
       <div ref={logRef} className="flex-1 space-y-3 overflow-y-auto p-5">
@@ -54,6 +62,14 @@ export function ChatView() {
 
       <Composer disabled={sending} onSend={send} />
       <MemoryPanel open={memoryOpen} onClose={() => setMemoryOpen(false)} />
+      <CarePanel
+        open={careOpen}
+        onClose={() => setCareOpen(false)}
+        onGenerated={() => {
+          setCareOpen(false)
+          void reload()
+        }}
+      />
     </div>
   )
 }
