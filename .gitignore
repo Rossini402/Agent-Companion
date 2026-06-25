@@ -2,6 +2,9 @@ node_modules/
 dist/
 .wrangler/
 .dev.vars
+.env.local
+.next/
+next-env.d.ts
 .turbo/
 *.log
 .DS_Store
